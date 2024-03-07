@@ -1,8 +1,19 @@
 ﻿#define WM_ICON WM_APP
 #define ID_TRAYICON WM_USER
 #include "hw-22.h"
+#include "framework.h"
+#define _CRT_SECURE_NO_WARNINGS
+
+using namespace std;
+
 
 CWaitableTimerDlg* CWaitableTimerDlg::ptr = NULL;
+
+struct ThreadParams {
+	int index;
+	HWND hListState;
+};
+ThreadParams* paramList = new ThreadParams;
 
 CWaitableTimerDlg::CWaitableTimerDlg(void)
 {
@@ -20,13 +31,15 @@ void CWaitableTimerDlg::Cls_OnClose(HWND hwnd)
 	EndDialog(hwnd, 0);
 }
 
+UINT editIds[] = { IDC_EDIT1, IDC_EDIT2, IDC_EDIT3, IDC_EDIT4 };
+
 BOOL CWaitableTimerDlg::Cls_OnInitDialog(HWND hwnd, HWND hwndFocus, LPARAM lParam)
 {
 
 	//list
 	hListTasks = GetDlgItem(hwnd, IDC_LIST1);
-	hListDate = GetDlgItem(hwnd, IDC_LIST2);
-	hListState = GetDlgItem(hwnd, IDC_LIST3);
+	hListDate = GetDlgItem(hwnd, IDC_LIST3);
+	hListState = GetDlgItem(hwnd, IDC_LIST2);
 
 	//buttons
 	hBAddTask = GetDlgItem(hwnd, IDC_BUTTON1);
@@ -62,22 +75,10 @@ BOOL CWaitableTimerDlg::Cls_OnInitDialog(HWND hwnd, HWND hwndFocus, LPARAM lPara
 	// ассоциированные с иконкой в трэе.	
 	lstrcpy(pNID->szTip, TEXT("Будильник")); // Подсказка
 
-	pNID->uCallbackMessage = WM_ICON; // Пользовательское сообщение
-	// Система использует этот идентификатор для посылки уведомляющих
-	// сообщений окну, дескриптор которого хранится в поле hWnd. Эти сообщения
-	// посылаются, когда происходит "мышиное" сообщение в прямоугольнике, где
-	// расположена иконка, или иконка выбирается или активизируется с помощью
-	// клавиатуры. Параметр сообщения wParam содержит при этом идентификатор
-	// иконки в трэе, где произошло событие, а параметр сообщения lParam - 
-	// "мышиное" или клавиатурное сообщение, ассоциированное с событием.
-	// Пример события: щелчок мышки по иконке в трэе.
+	pNID->uCallbackMessage = WM_ICON;
 
 	pNID->uFlags = NIF_TIP | NIF_ICON | NIF_MESSAGE | NIF_INFO;
-	// NIF_ICON - поле hIcon содержит корректное значение (позволяет создать иконку в трэе).
-	// NIF_MESSAGE - поле uCallbackMessage содержит корректное значение
-	// (позволяет получать сообщения от иконки в трэе).
-	// NIF_TIP - поле szTip содержит корректное значение (позволяет создать всплывающую подсказку для иконки в трэе).
-	// NIF_INFO - поле szInfo содержит корректное значение (позволяет создать Balloon подсказку для иконки в трэе).
+
 	lstrcpy(pNID->szInfo, TEXT("Приложение демонстрирует работу таймера синхронизации"));
 	lstrcpy(pNID->szInfoTitle, TEXT("Будильник!"));
 	pNID->uID = ID_TRAYICON; // предопределённый идентификатор иконки
@@ -87,7 +88,19 @@ BOOL CWaitableTimerDlg::Cls_OnInitDialog(HWND hwnd, HWND hwndFocus, LPARAM lPara
 DWORD WINAPI Thread(LPVOID lp)
 {
 	CWaitableTimerDlg* p = (CWaitableTimerDlg*)lp;
-	HANDLE hTimer = CreateWaitableTimer(NULL, TRUE, NULL);// создаем таймер синхронизации
+	int length = SendMessage(p->hEditTask, WM_GETTEXTLENGTH, 0, 0);
+	TCHAR* pBuffer = new TCHAR[length + 1];
+	TCHAR state[] = TEXT("in process");
+
+	GetWindowText(p->hEditTask, pBuffer, length + 1);
+	//обнуление
+	SetWindowText(p->hEditTask, TEXT(""));
+
+
+	SendMessage(p->hListTasks, LB_ADDSTRING, 0, LPARAM(pBuffer));
+	SendMessage(p->hListState, LB_ADDSTRING, 0, LPARAM(state));
+
+	HANDLE hTimer = CreateWaitableTimer(NULL, TRUE, NULL);
 	TCHAR buf[10];
 	int hours, minutes, seconds;
 	GetWindowText(p->hEditDateH, buf, 10);
@@ -96,17 +109,26 @@ DWORD WINAPI Thread(LPVOID lp)
 	minutes = _tstoi(buf);
 	GetWindowText(p->hEditDateS, buf, 10);
 	seconds = _tstoi(buf);
+
+	//обнуление
+	SetWindowText(p->hEditDateH, TEXT(""));
+	SetWindowText(p->hEditDateM, TEXT(""));
+	SetWindowText(p->hEditDateS, TEXT(""));
+
+	TCHAR time[100];
+	wsprintf(time, TEXT("%d:%d:%d"), hours, minutes, seconds);
+	SendMessage(p->hListDate, LB_ADDSTRING, 0, LPARAM(time));
 	SYSTEMTIME st;
 	GetLocalTime(&st); // получим текущее локальное время
 	if (st.wHour > hours || st.wHour == hours && st.wMinute > minutes ||
 		st.wHour == hours && st.wMinute == minutes && st.wSecond > seconds)
 	{
-		CloseHandle(hTimer);
-		/*EnableWindow(p->hButton, TRUE);
-		EnableWindow(p->hEdit1, TRUE);
-		EnableWindow(p->hEdit2, TRUE);
-		EnableWindow(p->hEdit3, TRUE);*/
 		return 0;
+	}
+	else if (st.wHour < hours && st.wMinute < minutes && st.wSecond < seconds)
+	{
+		MessageBox(p->hDialog, TEXT("Введено неправильное время!"), TEXT("Добавление задачи"), MB_OK | MB_ICONSTOP);
+
 	}
 	st.wHour = hours;
 	st.wMinute = minutes;
@@ -114,87 +136,120 @@ DWORD WINAPI Thread(LPVOID lp)
 	FILETIME ft;
 	SystemTimeToFileTime(&st, &ft); // преобразуем структуру SYSTEMTIME в FILETIME
 	LocalFileTimeToFileTime(&ft, &ft); // преобразуем местное время в UTC-время 
-	SetWaitableTimer(hTimer, (LARGE_INTEGER*)&ft, 0, NULL, NULL, FALSE); // устанавливаем таймер
-	// ожидаем переход таймера в сигнальное состояние
-	if (WaitForSingleObject(hTimer, INFINITE) == WAIT_OBJECT_0)
-	{
-		Shell_NotifyIcon(NIM_DELETE, p->pNID); // Удаляем иконку из трэя
-		ShowWindow(p->hDialog, SW_NORMAL); // Восстанавливаем окно
-		SetForegroundWindow(p->hDialog); // устанавливаем окно на передний план
-		for (int i = 0; i < 10; i++)
-		{
-			Beep(1000, 500);
-			Sleep(1000);
-		}
+	// Устанавливаем таймер
+	SetWaitableTimer(hTimer, (LARGE_INTEGER*)&ft, 0, NULL, NULL, FALSE);
+
+	// Ожидание перехода таймера в сигнальное состояние
+	if (WaitForSingleObject(hTimer, INFINITE) == WAIT_OBJECT_0) {
+		MessageBox(0, _T("Time is up!"), 0, 0);
+
+		// Удаление элемента по индексу
+		int index = SendMessage(p->hListState, LB_GETCURSEL, 0, 0);
+		SendMessage(p->hListState, LB_DELETESTRING, index, 0);
+		SendMessage(p->hListState, LB_INSERTSTRING, index, LPARAM(_T("Failed!")));
 	}
-	CancelWaitableTimer(hTimer); // отменяем таймер
-	CloseHandle(hTimer); // закрываем дескриптор таймера
-	/*EnableWindow(p->hButton, TRUE);
-	EnableWindow(p->hEdit1, TRUE);
-	EnableWindow(p->hEdit2, TRUE);
-	EnableWindow(p->hEdit3, TRUE);*/
+	//CloseHandle(hTimer); // закрываем дескриптор таймера
+
+
 	return 0;
 }
 
 
 void CWaitableTimerDlg::Cls_OnCommand(HWND hwnd, int id, HWND hwndCtl, UINT codeNotify)
 {
-	//if (id == IDC_BUTTON1)
-	//{
-	//	HANDLE h;
-	//	h = CreateThread(NULL, 0, Thread, this, 0, NULL);
-	//	CloseHandle(h);
-	//	/*EnableWindow(hButton, FALSE);
-	//	EnableWindow(hEdit1, FALSE);
-	//	EnableWindow(hEdit2, FALSE);
-	//	EnableWindow(hEdit3, FALSE);*/
-	//	ShowWindow(hwnd, SW_HIDE); // Прячем окно
-	//	Shell_NotifyIcon(NIM_ADD, pNID); // Добавляем иконку в трэй
-	//}
-	switch (id)
+	int check = 0;
+	_TCHAR buffName[100] = _T(" ");
+	_TCHAR buffTime[100] = _T(" ");
+
+	//добавление
+	if (id == IDC_BUTTON1)
 	{
-		case IDC_BUTTON1:
+		int length = SendMessage(hEditTask, WM_GETTEXTLENGTH, 0, 0);
+		TCHAR* pBuffer = new TCHAR[length + 1];
+
+		if (lstrlen(pBuffer))
+		{
+			int index = SendMessage(hListTasks, LB_FINDSTRINGEXACT, -1, LPARAM(pBuffer));
+			if (index == LB_ERR)
+			{
+				//проверка на пустоту
+				for (UINT i = 0; i < sizeof(editIds) / sizeof(editIds[0]); ++i) {
+					HWND hEdit = GetDlgItem(hwnd, editIds[i]);
+
+					int textLength = GetWindowTextLength(hEdit);
+
+					if (textLength > 0) {
+
+					}
+					else {
+						check++;
+					}
+				}
+
+
+
+				if (check == 0)
+				{
+					HANDLE h;
+					h = CreateThread(NULL, 0, Thread, this, 0, NULL);
+				}
+				else
+				{
+					MessageBox(hwnd, TEXT("Заполните все поля!"), TEXT("Добавление задачи"), MB_OK | MB_ICONSTOP);
+				}
+
+			}
+			else
+			{
+				MessageBox(hwnd, TEXT("Такое дело уже существует!"), TEXT("Добавление задачи"), MB_OK | MB_ICONSTOP);
+			}
+
+		}
+		delete[] pBuffer;
+	}
+
+	//редактирование
+	if (id == IDC_BUTTON2)
+	{
+		int index = SendMessage(hListTasks, LB_GETCURSEL, 0, 0);
+		if (index != LB_ERR) // выбран ли элемент списка?
 		{
 			int length = SendMessage(hEditTask, WM_GETTEXTLENGTH, 0, 0);
 			TCHAR* pBuffer = new TCHAR[length + 1];
 			GetWindowText(hEditTask, pBuffer, length + 1);
-			if (lstrlen(pBuffer))
-			{
-				int index = SendMessage(hListTasks, LB_FINDSTRINGEXACT, -1, LPARAM(pBuffer));
-				if (index == LB_ERR)
-						SendMessage(hListTasks, LB_ADDSTRING, 0, LPARAM(pBuffer));
-					
-				else
-					MessageBox(hwnd, TEXT("Такое дело уже существует!"), TEXT("Добавление задачи"), MB_OK | MB_ICONSTOP);
-			}
-			delete[] pBuffer;
+			SendMessage(hListTasks, LB_DELETESTRING, index, 0);
+			SendMessage(hListTasks, LB_INSERTSTRING, index, LPARAM(pBuffer));
+
 		}
-		break;
+		else
+		{
+			MessageBox(hwnd, TEXT("Поле не выбрано!"), TEXT("Изменение дела"), MB_OK | MB_ICONSTOP);
+		}
 	}
-		
+
+	//удаление
+	else if (id == IDC_BUTTON3) {
+
+		int index = SendMessage(hListTasks, LB_GETCURSEL, 0, 0);
+
+		SendMessage(hListTasks, LB_DELETESTRING, index, 0);
+		SendMessage(hListDate, LB_DELETESTRING, index, 0);
+		SendMessage(hListState, LB_DELETESTRING, index, 0);
+	}
+
+	//изменение статуса
+	else if (id == IDC_BUTTON4)
+	{
+		TCHAR state[] = TEXT("finished successful!");
+		int index = SendMessage(hListTasks, LB_GETCURSEL, 0, 0);
+		SendMessage(hListState, LB_DELETESTRING, index, 0);
+		SendMessage(hListState, LB_INSERTSTRING, index, LPARAM(state));
+	}
+
+
 }
 
-void CWaitableTimerDlg::Cls_OnSize(HWND hwnd, UINT state, int cx, int cy)
-{
-	if (state == SIZE_MINIMIZED)
-	{
-		ShowWindow(hwnd, SW_HIDE); // Прячем окно
-		Shell_NotifyIcon(NIM_ADD, pNID); // Добавляем иконку в трэй
-	}
-}
 
-// обработчик пользовательского сообщения
-void CWaitableTimerDlg::OnTrayIcon(WPARAM wp, LPARAM lp)
-{
-	// WPARAM - идентификатор иконки
-	// LPARAM - сообщение от мыши или клавиатурное сообщение
-	if (lp == WM_LBUTTONDBLCLK)
-	{
-		Shell_NotifyIcon(NIM_DELETE, pNID); // Удаляем иконку из трэя
-		ShowWindow(hDialog, SW_NORMAL); // Восстанавливаем окно
-		SetForegroundWindow(hDialog); // устанавливаем окно на передний план
-	}
-}
 
 BOOL CALLBACK CWaitableTimerDlg::DlgProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
@@ -203,14 +258,7 @@ BOOL CALLBACK CWaitableTimerDlg::DlgProc(HWND hwnd, UINT message, WPARAM wParam,
 		HANDLE_MSG(hwnd, WM_CLOSE, ptr->Cls_OnClose);
 		HANDLE_MSG(hwnd, WM_INITDIALOG, ptr->Cls_OnInitDialog);
 		HANDLE_MSG(hwnd, WM_COMMAND, ptr->Cls_OnCommand);
-		HANDLE_MSG(hwnd, WM_SIZE, ptr->Cls_OnSize);
 
-	}
-	// пользовательское сообщение
-	if (message == WM_ICON)
-	{
-		ptr->OnTrayIcon(wParam, lParam);
-		return TRUE;
 	}
 	return FALSE;
 }
